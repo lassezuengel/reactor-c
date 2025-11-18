@@ -15,8 +15,10 @@
 #include <stdlib.h>
 #include <string.h>      // Defines memcpy()
 #include <time.h>        // Defines nanosleep()
+#ifndef PLATFORM_ZEPHYR
 #include <netinet/in.h>  // IPPROTO_TCP, IPPROTO_UDP
 #include <netinet/tcp.h> // TCP_NODELAY
+#endif
 
 #include "net_util.h"
 #include "util.h"

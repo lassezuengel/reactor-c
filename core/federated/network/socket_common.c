@@ -1,14 +1,19 @@
 #include <unistd.h>      // Defines read(), write(), and close()
-#include <netinet/in.h>  // IPPROTO_TCP, IPPROTO_UDP
-#include <netinet/tcp.h> // TCP_NODELAY
 #include <errno.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
 #include <stdarg.h> //va_list
 #include <string.h> // strerror
+
+#ifdef PLATFORM_ZEPHYR
+#include <zephyr/net/socket.h>
+#else
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/in.h>  // IPPROTO_TCP, IPPROTO_UDP
+#include <netinet/tcp.h> // TCP_NODELAY
+#endif
 
 #include "util.h"
 #include "socket_common.h"

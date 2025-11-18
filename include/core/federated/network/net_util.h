@@ -19,11 +19,14 @@
 
 #ifdef PLATFORM_ARDUINO
 #error To be implemented. No support for federation on Arduino yet.
+#elif PLATFORM_ZEPHYR
+#warning "Federation on Zephyr is experimental."
+#include <zephyr/net/socket.h>
 #else
 #include <sys/socket.h>
-#include <regex.h>
 #endif
 
+#include <regex.h>
 #include <sys/types.h>
 #include <stdbool.h>
 

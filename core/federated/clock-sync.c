@@ -11,8 +11,12 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#ifdef PLATFORM_ZEPHYR
+#include <zephyr/net/socket.h>
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
+#endif
 
 #include "low_level_platform.h"
 #include "clock-sync.h"

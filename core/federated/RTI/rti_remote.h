@@ -15,7 +15,11 @@
 #ifndef RTI_REMOTE_H
 #define RTI_REMOTE_H
 
+#ifdef PLATFORM_ZEPHYR
+#include <zephyr/net/socket.h>
+#else
 #include <sys/socket.h>
+#endif
 #include <sys/types.h>  // Provides select() function to read from multiple sockets.
 #include <netinet/in.h> // Defines struct sockaddr_in
 #include <arpa/inet.h>  // inet_ntop & inet_pton

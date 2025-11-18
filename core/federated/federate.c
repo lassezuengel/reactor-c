@@ -9,14 +9,19 @@
  */
 
 #ifdef FEDERATED
-#if !defined(PLATFORM_Linux) && !defined(PLATFORM_Darwin)
+#if !defined(PLATFORM_Linux) && !defined(PLATFORM_Darwin) && !defined(PLATFORM_ZEPHYR)
 #error No support for federated execution on this platform.
 #endif
 
+#ifdef PLATFORM_ZEPHYR
+#include <zephyr/net/socket.h>
+#else
+#include <netinet/in.h> // Defines struct sockaddr_in
 #include <arpa/inet.h>  // inet_ntop & inet_pton
 #include <netdb.h>      // Defines getaddrinfo(), freeaddrinfo() and struct addrinfo.
-#include <netinet/in.h> // Defines struct sockaddr_in
 #include <sys/socket.h>
+#endif
+
 #include <unistd.h> // Defines read(), write(), and close()
 #include <string.h> // Defines memset(), strnlen(), strncmp(), strncpy()
 #include <stdio.h>  // Defines strerror()
