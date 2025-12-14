@@ -130,44 +130,13 @@ void reset_socket_stat(struct socket_stat_t* socket_stat) {
 uint16_t setup_clock_synchronization_with_rti() {
   uint16_t port_to_return = UINT16_MAX; // Default if clock sync is off.
 #if (LF_CLOCK_SYNC >= LF_CLOCK_SYNC_ON)
-  // Initialize the UDP socket
-  _lf_rti_socket_UDP = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  // Initialize the necessary information for the UDP address
-  struct sockaddr_in federate_UDP_addr;
-  federate_UDP_addr.sin_family = AF_INET;
-  federate_UDP_addr.sin_port = htons(0u); // Port 0 indicates to bind that
-                                          // it can assign any port to this
-                                          // socket. This is okay because
-                                          // the port number is then sent
-                                          // to the RTI.
-  federate_UDP_addr.sin_addr.s_addr = INADDR_ANY;
-  if (bind(_lf_rti_socket_UDP, (struct sockaddr*)&federate_UDP_addr, sizeof(federate_UDP_addr)) < 0) {
-    lf_print_error_system_failure("Failed to bind its UDP socket.");
+  uint16_t final_port;
+  // Create a UDP server. Let the OS choose the port by passing 0.
+  if (create_server(0, &_lf_rti_socket_UDP, &final_port, UDP, false) != 0) {
+    lf_print_error_system_failure("Failed to create UDP server for clock synchronization.");
   }
-  // Retrieve the port number that was assigned by the operating system
-  socklen_t addr_length = sizeof(federate_UDP_addr);
-  if (getsockname(_lf_rti_socket_UDP, (struct sockaddr*)&federate_UDP_addr, &addr_length) == -1) {
-    // FIXME: Send 0 UDP_PORT message instead of exiting.
-    // That will disable clock synchronization.
-    lf_print_error_system_failure("Failed to retrieve UDP port.");
-  }
-  LF_PRINT_DEBUG("Assigned UDP port number %u to its socket.", ntohs(federate_UDP_addr.sin_port));
-
-  port_to_return = ntohs(federate_UDP_addr.sin_port);
-
-  // Set the option for this socket to reuse the same address
-  int option_value = 1;
-  if (setsockopt(_lf_rti_socket_UDP, SOL_SOCKET, SO_REUSEADDR, &option_value, sizeof(int)) < 0) {
-    lf_print_error("Failed to set SO_REUSEADDR option on the socket: %s.", strerror(errno));
-  }
-  // Set the timeout on the UDP socket so that read and write operations don't block for too long
-  struct timeval timeout_time = {.tv_sec = UDP_TIMEOUT_TIME / BILLION, .tv_usec = (UDP_TIMEOUT_TIME % BILLION) / 1000};
-  if (setsockopt(_lf_rti_socket_UDP, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_time, sizeof(timeout_time)) < 0) {
-    lf_print_error("Failed to set SO_RCVTIMEO option on the socket: %s.", strerror(errno));
-  }
-  if (setsockopt(_lf_rti_socket_UDP, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout_time, sizeof(timeout_time)) < 0) {
-    lf_print_error("Failed to set SO_SNDTIMEO option on the socket: %s.", strerror(errno));
-  }
+  LF_PRINT_DEBUG("Created UDP server for clock sync on port %u.", final_port);
+  port_to_return = final_port;
 #elif (LF_CLOCK_SYNC == LF_CLOCK_SYNC_INIT)
   port_to_return = 0u;
 #endif // (LF_CLOCK_SYNC >= LF_CLOCK_SYNC_ON)
@@ -395,8 +364,8 @@ static void* listen_to_rti_UDP_thread(void* args) {
   // uses bind() to reserve that address, so recording it once is sufficient.
   bool connected = false;
   while (1) {
-    struct sockaddr_in RTI_UDP_addr;
-    socklen_t RTI_UDP_addr_length = sizeof(RTI_UDP_addr);
+    struct sockaddr_storage RTI_UDP_addr;
+    socklen_t RTI_UDP_addr_length = sizeof(struct sockaddr_storage);
     ssize_t bytes_read = 0;
     // Read from the UDP socket
     do {
@@ -422,7 +391,14 @@ static void* listen_to_rti_UDP_thread(void* args) {
       lf_print_error("Clock sync: UDP socket to RTI is broken: %s. Clock sync is now disabled.", strerror(errno));
       break;
     }
-    LF_PRINT_DEBUG("Clock sync: Received UDP message %u from RTI on port %u.", buffer[0], ntohs(RTI_UDP_addr.sin_port));
+
+    uint16_t port = 0;
+    if (RTI_UDP_addr.ss_family == AF_INET) {
+        port = ntohs(((struct sockaddr_in*)&RTI_UDP_addr)->sin_port);
+    } else if (RTI_UDP_addr.ss_family == AF_INET6) {
+        port = ntohs(((struct sockaddr_in6*)&RTI_UDP_addr)->sin6_port);
+    }
+    LF_PRINT_DEBUG("Clock sync: Received UDP message %u from RTI on port %u.", buffer[0], port);
 
     // Handle the message
     if (waiting_for_T1) {

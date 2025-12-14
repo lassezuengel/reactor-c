@@ -115,17 +115,6 @@
 typedef enum socket_type_t { TCP, UDP } socket_type_t;
 
 /**
- * @brief Create an IPv4 TCP socket with Nagle's algorithm disabled.
- * @ingroup Federated
- *
- * This uses TCP_NODELAY and Delayed ACKs disabled with TCP_QUICKACK.
- * It exits application on any error.
- *
- * @return The socket ID (a file descriptor).
- */
-int create_real_time_tcp_socket_errexit();
-
-/**
  * @brief Create a TCP server that listens for socket connections.
  * @ingroup Federated
  *
@@ -180,12 +169,12 @@ int accept_socket(int socket, int rti_socket);
  * of default ports starting from `DEFAULT_PORT`. The function will stop retrying
  * if the `CONNECT_TIMEOUT` is reached.
  *
- * @param sock The socket file descriptor that has already been created (using `socket()`).
  * @param hostname The hostname or IP address of the server to connect to.
  * @param port The port number to connect to. If 0 is specified, a default port range will be used.
+ * @param sock Pointer to a socket descriptor that will be created and connected.
  * @return 0 on success, -1 on failure, and `errno` is set to indicate the specific error.
  */
-int connect_to_socket(int sock, const char* hostname, int port);
+int connect_to_socket(const char* hostname, int port, int* sock);
 
 /**
  * @brief Read the specified number of bytes from the specified socket into the specified buffer.

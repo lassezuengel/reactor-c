@@ -618,7 +618,7 @@ void handle_address_query(uint16_t fed_id) {
   federate_info_t* fed = GET_FED_INFO(fed_id);
   // Use buffer both for reading and constructing the reply.
   // The length is what is needed for the reply.
-  unsigned char buffer[1 + sizeof(int32_t)];
+  unsigned char buffer[sizeof(uint16_t)];
   read_from_socket_fail_on_error(&fed->socket, sizeof(uint16_t), (unsigned char*)buffer,
                                  "Failed to read address query.");
   uint16_t remote_fed_id = extract_uint16(buffer);
@@ -629,30 +629,31 @@ void handle_address_query(uint16_t fed_id) {
 
   LF_PRINT_DEBUG("RTI received address query from %d for %d.", fed_id, remote_fed_id);
 
-  // NOTE: server_port initializes to -1, which means the RTI does not know
-  // the port number because it has not yet received an MSG_TYPE_ADDRESS_ADVERTISEMENT message
-  // from this federate. In that case, it will respond by sending -1.
+  // NOTE: server_addr_len initializes to 0, which means the RTI does not know
+  // the address because it has not yet received an MSG_TYPE_ADDRESS_ADVERTISEMENT message
+  // from this federate. In that case, it will respond by sending a length of 0.
 
   // Response message is MSG_TYPE_ADDRESS_QUERY_REPLY.
-  buffer[0] = MSG_TYPE_ADDRESS_QUERY_REPLY;
+  unsigned char reply_header[1 + sizeof(socklen_t)];
+  reply_header[0] = MSG_TYPE_ADDRESS_QUERY_REPLY;
 
-  // Encode the port number.
+  // Encode the address length.
   federate_info_t* remote_fed = GET_FED_INFO(remote_fed_id);
 
-  // Send the port number (which could be -1).
   LF_MUTEX_LOCK(&rti_mutex);
-  encode_int32(remote_fed->server_port, (unsigned char*)&buffer[1]);
-  write_to_socket_fail_on_error(&fed->socket, sizeof(int32_t) + 1, (unsigned char*)buffer, &rti_mutex,
-                                "Failed to write port number to socket of federate %d.", fed_id);
+  memcpy(&reply_header[1], &remote_fed->server_addr_len, sizeof(socklen_t));
 
-  // Send the server IP address to federate.
-  write_to_socket_fail_on_error(&fed->socket, sizeof(remote_fed->server_ip_addr),
-                                (unsigned char*)&remote_fed->server_ip_addr, &rti_mutex,
-                                "Failed to write ip address to socket of federate %d.", fed_id);
+  write_to_socket_fail_on_error(&fed->socket, 1 + sizeof(socklen_t), (unsigned char*)reply_header, &rti_mutex,
+                                "Failed to write address length to socket of federate %d.", fed_id);
+
+  // Send the server address to federate.
+  if (remote_fed->server_addr_len > 0) {
+    write_to_socket_fail_on_error(&fed->socket, remote_fed->server_addr_len, (unsigned char*)&remote_fed->server_addr,
+                                  &rti_mutex, "Failed to write address to socket of federate %d.", fed_id);
+  }
   LF_MUTEX_UNLOCK(&rti_mutex);
 
-  LF_PRINT_DEBUG("Replied to address query from federate %d with address %s:%d.", fed_id, remote_fed->server_hostname,
-                 remote_fed->server_port);
+  LF_PRINT_DEBUG("Replied to address query from federate %d.", fed_id);
 }
 
 void handle_address_ad(uint16_t federate_id) {
@@ -669,7 +670,12 @@ void handle_address_ad(uint16_t federate_id) {
   assert(server_port < 65536);
 
   LF_MUTEX_LOCK(&rti_mutex);
-  fed->server_port = server_port;
+  // Update the port in the previously stored server address.
+  if (fed->server_addr.ss_family == AF_INET) {
+    ((struct sockaddr_in*)&fed->server_addr)->sin_port = htons((uint16_t)server_port);
+  } else if (fed->server_addr.ss_family == AF_INET6) {
+    ((struct sockaddr_in6*)&fed->server_addr)->sin6_port = htons((uint16_t)server_port);
+  }
   LF_MUTEX_UNLOCK(&rti_mutex);
 
   LF_PRINT_LOG("Received address advertisement with port %d from federate %d.", server_port, federate_id);
@@ -750,10 +756,9 @@ void send_physical_clock(unsigned char message_type, federate_info_t* fed, socke
 
   // Send the message
   if (socket_type == UDP) {
-    // FIXME: UDP_addr is never initialized.
     LF_PRINT_DEBUG("Clock sync: RTI sending UDP message type %u.", buffer[0]);
     ssize_t bytes_written = sendto(rti_remote->socket_descriptor_UDP, buffer, 1 + sizeof(int64_t), 0,
-                                   (struct sockaddr*)&fed->UDP_addr, sizeof(fed->UDP_addr));
+                                   (struct sockaddr*)&fed->udp_addr, fed->udp_addr_len);
     if (bytes_written < (ssize_t)sizeof(int64_t) + 1) {
       lf_print_warning("Clock sync: RTI failed to send physical time to federate %d: %s\n", fed->enclave.id,
                        strerror(errno));
@@ -1136,22 +1141,20 @@ static int32_t receive_and_check_fed_id_message(int* socket_id) {
   federate_info_t* fed = GET_FED_INFO(fed_id);
   // The MSG_TYPE_FED_IDS message has the right federation ID.
 
-  // Get the peer address from the connected socket_id. Then assign it as the federate's socket server.
-  struct sockaddr_in peer_addr;
-  socklen_t addr_len = sizeof(peer_addr);
-  if (getpeername(*socket_id, (struct sockaddr*)&peer_addr, &addr_len) != 0) {
-    lf_print_error("RTI failed to get peer address.");
+  // Get the peer address from the connected socket_id and store it as the federate's server address.
+  // The port will be overwritten later when the federate sends its ADVERTISEMENT.
+  fed->server_addr_len = sizeof(struct sockaddr_storage);
+  if (getpeername(*socket_id, (struct sockaddr*)&fed->server_addr, &fed->server_addr_len) != 0) {
+    lf_print_error("RTI failed to get peer address for federate %d.", fed_id);
   }
-  fed->server_ip_addr = peer_addr.sin_addr;
 
 #if LOG_LEVEL >= LOG_LEVEL_DEBUG
-  // Create the human readable format and copy that into
-  // the .server_hostname field of the federate.
-  char str[INET_ADDRSTRLEN + 1];
-  inet_ntop(AF_INET, &fed->server_ip_addr, str, INET_ADDRSTRLEN);
-  strncpy(fed->server_hostname, str, INET_ADDRSTRLEN);
-
-  LF_PRINT_DEBUG("RTI got address %s from federate %d.", fed->server_hostname, fed_id);
+  // Create the human readable format for logging.
+  char hostname[INET6_ADDRSTRLEN];
+  char port_str[6];
+  getnameinfo((struct sockaddr*)&fed->server_addr, fed->server_addr_len, hostname, INET6_ADDRSTRLEN, port_str, 6,
+              NI_NUMERICHOST | NI_NUMERICSERV);
+  LF_PRINT_DEBUG("RTI got connection from %s:%s for federate %d.", hostname, port_str, fed_id);
 #endif
   fed->socket = *socket_id;
 
@@ -1315,10 +1318,14 @@ static int receive_udp_message_and_set_up_clock_sync(int* socket_id, uint16_t fe
       if (rti_remote->clock_sync_global_status >= clock_sync_on) {
         // If no runtime clock sync, no need to set up the UDP port.
         if (federate_UDP_port_number > 0) {
-          // Initialize the UDP_addr field of the federate struct
-          fed->UDP_addr.sin_family = AF_INET;
-          fed->UDP_addr.sin_port = htons(federate_UDP_port_number);
-          fed->UDP_addr.sin_addr = fed->server_ip_addr;
+          // Copy the server address and then change the port.
+          memcpy(&fed->udp_addr, &fed->server_addr, fed->server_addr_len);
+          fed->udp_addr_len = fed->server_addr_len;
+          if (fed->udp_addr.ss_family == AF_INET) {
+            ((struct sockaddr_in*)&fed->udp_addr)->sin_port = htons(federate_UDP_port_number);
+          } else if (fed->udp_addr.ss_family == AF_INET6) {
+            ((struct sockaddr_in6*)&fed->udp_addr)->sin6_port = htons(federate_UDP_port_number);
+          }
         }
       } else {
         // Disable clock sync after initial round.
@@ -1494,9 +1501,11 @@ void initialize_federate(federate_info_t* fed, uint16_t id) {
   fed->socket = -1; // No socket.
   fed->clock_synchronization_enabled = true;
   fed->in_transit_message_tags = pqueue_tag_init(10);
-  strncpy(fed->server_hostname, "localhost", INET_ADDRSTRLEN);
-  fed->server_ip_addr.s_addr = 0;
-  fed->server_port = -1;
+  // Zero out the new address fields.
+  memset(&fed->udp_addr, 0, sizeof(struct sockaddr_storage));
+  fed->udp_addr_len = 0;
+  memset(&fed->server_addr, 0, sizeof(struct sockaddr_storage));
+  fed->server_addr_len = 0;
 }
 
 int32_t start_rti_server(uint16_t port) {

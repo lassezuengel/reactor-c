@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.13)
 project(ReactorC LANGUAGES C)
 
+option(USE_IPV6 "Use IPv6 instead of IPv4" ON)
+
 # Require C11
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
