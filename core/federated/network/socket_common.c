@@ -25,66 +25,6 @@
 lf_mutex_t shutdown_mutex;
 
 /**
- * @brief Use getaddrinfo to resolve an address and create a socket.
- *
- * This function is a protocol-agnostic helper that resolves a host and port,
- * then creates a socket of the appropriate type.
- *
- * @param host The hostname or IP address string.
- * @param port_str The port number as a string.
- * @param sock_type The type of socket (TCP or UDP).
- * @param is_server True to create a passive socket for a server, false for a client.
- * @param addrinfo_result A pointer to be filled with the resulting addrinfo struct list.
- * @return The created socket descriptor, or -1 on failure.
- */
-static int get_addrinfo_and_create_socket(const char* host, const char* port_str, socket_type_t sock_type,
-                                          bool is_server, struct addrinfo** addrinfo_result) {
-  struct addrinfo hints;
-  int socket_descriptor = -1;
-
-  memset(&hints, 0, sizeof(hints));
-#ifdef USE_IPV6
-  hints.ai_family = AF_INET6; // Force IPv6
-#else
-  hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
-#endif
-  hints.ai_socktype = (sock_type == TCP) ? SOCK_STREAM : SOCK_DGRAM;
-  hints.ai_protocol = (sock_type == TCP) ? IPPROTO_TCP : IPPROTO_UDP;
-  if (is_server) {
-    hints.ai_flags = AI_PASSIVE; // For wildcard IP address
-  }
-
-  int result = getaddrinfo(host, port_str, &hints, addrinfo_result);
-  if (result != 0) {
-    lf_print_error("getaddrinfo failed: %s", gai_strerror(result));
-    return -1;
-  }
-
-  // `getaddrinfo` returns a list of address structures.
-  // Try each address until we successfully create a socket.
-  for (struct addrinfo* rp = *addrinfo_result; rp != NULL; rp = rp->ai_next) {
-    socket_descriptor = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (socket_descriptor == -1) {
-      lf_print_warning("Failed to create socket: %s. Trying next address.", strerror(errno));
-      continue; // Try the next address
-    }
-
-    // If we got a valid socket, we are done.
-    break;
-  }
-
-  if (socket_descriptor == -1) {
-    lf_print_error("Could not create a socket.");
-    freeaddrinfo(*addrinfo_result);
-    *addrinfo_result = NULL;
-  }
-
-  return socket_descriptor;
-}
-
-
-
-/**
  * Set the socket timeout options.
  * @param socket_descriptor The file descriptor of the socket on which to set options.
  * @param timeout_time A pointer to a `struct timeval` that specifies the timeout duration
@@ -124,49 +64,62 @@ int create_server(uint16_t port, int* final_socket, uint16_t* final_port, socket
     char port_str[6]; // Max port number is 65535, so 5 digits + null terminator
     snprintf(port_str, sizeof(port_str), "%u", used_port);
 
-    // For a server, host is NULL to bind to any of the host's addresses
-    socket_descriptor = get_addrinfo_and_create_socket(NULL, port_str, sock_type, true, &addrinfo_result);
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+#ifdef USE_IPV6
+    hints.ai_family = AF_INET6; // Force IPv6
+#else
+    hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+#endif
+    hints.ai_socktype = (sock_type == TCP) ? SOCK_STREAM : SOCK_DGRAM;
+    hints.ai_protocol = (sock_type == TCP) ? IPPROTO_TCP : IPPROTO_UDP;
+    hints.ai_flags = AI_PASSIVE; // For wildcard IP address
+
+    int result = getaddrinfo(NULL, port_str, &hints, &addrinfo_result);
+    if (result != 0) {
+        lf_print_error("getaddrinfo failed: %s", gai_strerror(result));
+        if (addrinfo_result != NULL) freeaddrinfo(addrinfo_result);
+        return -1;
+    }
+
+    // `getaddrinfo` returns a list of address structures.
+    // Try each address until we successfully create and bind a socket.
+    for (struct addrinfo* rp = addrinfo_result; rp != NULL; rp = rp->ai_next) {
+        socket_descriptor = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (socket_descriptor == -1) {
+            lf_print_warning("Failed to create socket: %s. Trying next address.", strerror(errno));
+            continue; // Try the next address
+        }
+
+        // Set socket options (like SO_REUSEADDR) BEFORE binding.
+        struct timeval timeout_time;
+        if (sock_type == TCP) {
+        timeout_time =
+            (struct timeval){.tv_sec = TCP_TIMEOUT_TIME / BILLION, .tv_usec = (TCP_TIMEOUT_TIME % BILLION) / 1000};
+        } else {
+        timeout_time =
+            (struct timeval){.tv_sec = UDP_TIMEOUT_TIME / BILLION, .tv_usec = (UDP_TIMEOUT_TIME % BILLION) / 1000};
+        }
+        set_socket_timeout_option(socket_descriptor, &timeout_time);
+
+        if (bind(socket_descriptor, rp->ai_addr, rp->ai_addrlen) == 0) {
+            bind_result = 0; // Success
+            break;
+        }
+
+        // Bind failed for this address, close the socket and try the next one.
+        close(socket_descriptor);
+        socket_descriptor = -1;
+    }
+    freeaddrinfo(addrinfo_result);
+    addrinfo_result = NULL;
 
     if (socket_descriptor == -1) {
-      if (increment_port_on_retry) {
-        used_port++;
-        if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES)
-          used_port = DEFAULT_PORT;
-        lf_print_warning("Failed to create socket for port %d. Will try again with port %d.", used_port - 1,
-                       used_port);
-        if (addrinfo_result != NULL)
-          freeaddrinfo(addrinfo_result); // Clean up from failed attempt
-        continue;
-      } else {
-        lf_print_error("Failed to create server socket.");
-        return -1;
-      }
-    }
-
-    // Set socket options (like SO_REUSEADDR) BEFORE binding.
-    struct timeval timeout_time;
-    if (sock_type == TCP) {
-      timeout_time =
-          (struct timeval){.tv_sec = TCP_TIMEOUT_TIME / BILLION, .tv_usec = (TCP_TIMEOUT_TIME % BILLION) / 1000};
-    } else {
-      timeout_time =
-          (struct timeval){.tv_sec = UDP_TIMEOUT_TIME / BILLION, .tv_usec = (UDP_TIMEOUT_TIME % BILLION) / 1000};
-    }
-    set_socket_timeout_option(socket_descriptor, &timeout_time);
-
-    // We have a socket, now try to bind it.
-    // Iterate through the address list from getaddrinfo.
-    for (struct addrinfo* rp = addrinfo_result; rp != NULL; rp = rp->ai_next) {
-      if (bind(socket_descriptor, rp->ai_addr, rp->ai_addrlen) == 0) {
-        bind_result = 0; // Success
-        break;
-      }
+      lf_print_error("Failed to create a socket for port %d.", used_port);
+      // Fall through to retry logic
     }
 
     if (bind_result != 0) {
-      // Bind failed.
-      close(socket_descriptor);
-
       if (increment_port_on_retry) {
         lf_print_warning("Failed to bind to port %d.", used_port);
         used_port++;
@@ -179,13 +132,10 @@ int create_server(uint16_t port, int* final_socket, uint16_t* final_port, socket
         lf_sleep(PORT_BIND_RETRY_INTERVAL);
       }
     }
-    // Free addrinfo for this iteration
-    freeaddrinfo(addrinfo_result);
-    addrinfo_result = NULL;
   }
 
   if (bind_result != 0) {
-    lf_print_error_and_exit("Failed to bind the socket. Port %d may not be available.", used_port);
+    lf_print_error_and_exit("Failed to bind the socket after multiple retries. Port %d may not be available.", port);
   }
 
   // For TCP, set real-time options and listen
@@ -277,22 +227,16 @@ int accept_socket(int socket, int rti_socket) {
 }
 
 int connect_to_socket(const char* hostname, int port, int* sock) {
-  struct addrinfo* addrinfo_result = NULL;
+  struct addrinfo *addrinfo_result, *rp;
   int socket_descriptor = -1;
   uint16_t used_port = (port == 0) ? DEFAULT_PORT : (uint16_t)port;
 
-  const char* effective_hostname = hostname;
-#ifdef USE_IPV6
-  if (strcmp(hostname, "localhost") == 0) {
-    effective_hostname = "::1";
-  }
-#endif
-
   instant_t start_connect = lf_time_physical();
 
+  // As long as we are not timed out, try to connect
   while (1) {
     if (CHECK_TIMEOUT(start_connect, CONNECT_TIMEOUT)) {
-      lf_print_error("Failed to connect with timeout: " PRINTF_TIME ". Giving up.", CONNECT_TIMEOUT);
+      lf_print_error("Failed to connect to %s with timeout: " PRINTF_TIME ". Giving up.", hostname, CONNECT_TIMEOUT);
       return -1;
     }
 
@@ -300,43 +244,45 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
     char port_str[6];
     snprintf(port_str, sizeof(port_str), "%u", used_port);
 
-    // This is for a client, so is_server is false.
-    // We assume TCP for this function.
-    socket_descriptor = get_addrinfo_and_create_socket(effective_hostname, port_str, TCP, false, &addrinfo_result);
-    if (socket_descriptor == -1) {
-      if (addrinfo_result != NULL) {
-        freeaddrinfo(addrinfo_result);
-        addrinfo_result = NULL;
-      }
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+#ifdef USE_IPV6
+    hints.ai_family = AF_INET6; // Force IPv6
+#else
+    hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+#endif
+    hints.ai_socktype = SOCK_STREAM; // TCP
+    hints.ai_protocol = IPPROTO_TCP;
 
-      lf_sleep(CONNECT_RETRY_INTERVAL);
-      if (port == 0) {
-        used_port++;
-        if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES) {
-          used_port = DEFAULT_PORT;
-        }
-      }
-      lf_print_warning("Could not create socket for %s:%d. Will try again in " PRINTF_TIME " nsec.", effective_hostname,
-                       used_port, CONNECT_RETRY_INTERVAL);
-      continue;
+    int result = getaddrinfo(hostname, port_str, &hints, &addrinfo_result);
+    if (result != 0) {
+        lf_print_warning("getaddrinfo failed for %s:%d: %s. Will try again in " PRINTF_TIME " nsec.", hostname, used_port, gai_strerror(result), CONNECT_RETRY_INTERVAL);
+        lf_sleep(CONNECT_RETRY_INTERVAL);
+        continue;
     }
 
-    // Try to connect to the resolved addresses
-    int ret = -1;
-    for (struct addrinfo* rp = addrinfo_result; rp != NULL; rp = rp->ai_next) {
-      if (connect(socket_descriptor, rp->ai_addr, rp->ai_addrlen) == 0) {
-        ret = 0; // Success
-        break;
-      }
+    // `getaddrinfo` returns a list of address structures.
+    // Try each address until we successfully connect.
+    for (rp = addrinfo_result; rp != NULL; rp = rp->ai_next) {
+        socket_descriptor = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (socket_descriptor == -1) {
+            lf_print_warning("Failed to create socket for %s:%d: %s.", hostname, used_port, strerror(errno));
+            continue; // Try the next address
+        }
+
+        if (connect(socket_descriptor, rp->ai_addr, rp->ai_addrlen) == 0) {
+            break; // Success
+        }
+
+        // Connect failed.
+        close(socket_descriptor);
+        socket_descriptor = -1;
     }
 
     freeaddrinfo(addrinfo_result);
-    addrinfo_result = NULL;
 
-    if (ret < 0) {
-      close(socket_descriptor);
-      socket_descriptor = -1;
-
+    if (socket_descriptor == -1) {
+      // We failed to connect to any of the resolved addresses.
       lf_sleep(CONNECT_RETRY_INTERVAL);
       if (port == 0) {
         used_port++;
@@ -344,12 +290,12 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
           used_port = DEFAULT_PORT;
         }
       }
-      lf_print_warning("Could not connect to %s:%d. Will try again in " PRINTF_TIME " nsec.", effective_hostname, used_port,
+      lf_print_warning("Could not connect to %s:%d. Will try again in " PRINTF_TIME " nsec.", hostname, used_port,
                        CONNECT_RETRY_INTERVAL);
       continue;
     } else {
       // Success
-      lf_print("Connected to %s:%d.", effective_hostname, used_port);
+      lf_print("Connected to %s:%d.", hostname, used_port);
       *sock = socket_descriptor;
       return 0;
     }
