@@ -281,6 +281,13 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
   int socket_descriptor = -1;
   uint16_t used_port = (port == 0) ? DEFAULT_PORT : (uint16_t)port;
 
+  const char* effective_hostname = hostname;
+#ifdef USE_IPV6
+  if (strcmp(hostname, "localhost") == 0) {
+    effective_hostname = "::1";
+  }
+#endif
+
   instant_t start_connect = lf_time_physical();
 
   while (1) {
@@ -295,7 +302,7 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
 
     // This is for a client, so is_server is false.
     // We assume TCP for this function.
-    socket_descriptor = get_addrinfo_and_create_socket(hostname, port_str, TCP, false, &addrinfo_result);
+    socket_descriptor = get_addrinfo_and_create_socket(effective_hostname, port_str, TCP, false, &addrinfo_result);
     if (socket_descriptor == -1) {
       if (addrinfo_result != NULL) {
         freeaddrinfo(addrinfo_result);
@@ -309,7 +316,7 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
           used_port = DEFAULT_PORT;
         }
       }
-      lf_print_warning("Could not create socket for %s:%d. Will try again in " PRINTF_TIME " nsec.", hostname,
+      lf_print_warning("Could not create socket for %s:%d. Will try again in " PRINTF_TIME " nsec.", effective_hostname,
                        used_port, CONNECT_RETRY_INTERVAL);
       continue;
     }
@@ -337,12 +344,12 @@ int connect_to_socket(const char* hostname, int port, int* sock) {
           used_port = DEFAULT_PORT;
         }
       }
-      lf_print_warning("Could not connect to %s:%d. Will try again in " PRINTF_TIME " nsec.", hostname, used_port,
+      lf_print_warning("Could not connect to %s:%d. Will try again in " PRINTF_TIME " nsec.", effective_hostname, used_port,
                        CONNECT_RETRY_INTERVAL);
       continue;
     } else {
       // Success
-      lf_print("Connected to %s:%d.", hostname, used_port);
+      lf_print("Connected to %s:%d.", effective_hostname, used_port);
       *sock = socket_descriptor;
       return 0;
     }
