@@ -151,24 +151,6 @@ static void send_tag(unsigned char type, tag_t tag) {
   LF_MUTEX_UNLOCK(&lf_outbound_socket_mutex);
 }
 
-/**
- * Return true if either the socket to the RTI is broken or the socket is
- * alive and the first unread byte on the socket's queue is MSG_TYPE_FAILED.
- */
-static bool rti_failed() {
-  unsigned char first_byte;
-  int socket_id = _fed.socket_TCP_RTI; // Assume atomic read so we don't pass -1 to peek_from_socket.
-  if (socket_id > 0) {
-    ssize_t bytes = peek_from_socket(socket_id, &first_byte);
-    if (bytes < 0 || (bytes == 1 && first_byte == MSG_TYPE_FAILED))
-      return true;
-    else
-      return false;
-  }
-  lf_print_warning("Socket to the RTI is no longer connected.");
-  return true;
-}
-
 //////////////////////////////// Port Status Handling ///////////////////////////////////////
 
 extern lf_action_base_t* _lf_action_table[];
