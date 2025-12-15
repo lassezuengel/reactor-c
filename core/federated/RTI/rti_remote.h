@@ -67,19 +67,19 @@ typedef struct federate_info_t {
   /** @brief The TCP socket descriptor for communicating with this federate. */
   int socket;
   /** @brief The UDP address for the federate. */
-  struct sockaddr_in UDP_addr;
+  struct sockaddr_in6 UDP_addr;
   /** @brief Indicates the status of clock synchronization for this federate. Enabled by default. */
   bool clock_synchronization_enabled;
   /** @brief Record of in-transit messages to this federate that are not yet processed. This record is ordered based on
    * the time value of each message for a more efficient access. */
   pqueue_tag_t* in_transit_message_tags;
   /** @brief Human-readable IP address of the federate's socket server. */
-  char server_hostname[INET_ADDRSTRLEN];
+  char server_hostname[INET6_ADDRSTRLEN];
   /** @brief Port number of the socket server of the federate. The port number will be -1 if there is no server or if
    * the RTI has not been informed of the port number. */
   int32_t server_port;
   /** @brief Information about the IP address of the socket server of the federate. */
-  struct in_addr server_ip_addr;
+  struct in6_addr server_ip_addr;
 } federate_info_t;
 
 /**

@@ -131,16 +131,15 @@ uint16_t setup_clock_synchronization_with_rti() {
   uint16_t port_to_return = UINT16_MAX; // Default if clock sync is off.
 #if (LF_CLOCK_SYNC >= LF_CLOCK_SYNC_ON)
   // Initialize the UDP socket
-  _lf_rti_socket_UDP = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  // Initialize the necessary information for the UDP address
-  struct sockaddr_in federate_UDP_addr;
-  federate_UDP_addr.sin_family = AF_INET;
-  federate_UDP_addr.sin_port = htons(0u); // Port 0 indicates to bind that
-                                          // it can assign any port to this
-                                          // socket. This is okay because
-                                          // the port number is then sent
-                                          // to the RTI.
-  federate_UDP_addr.sin_addr.s_addr = INADDR_ANY;
+  _lf_rti_socket_UDP = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);  // Initialize the necessary information for the UDP address
+  struct sockaddr_in6 federate_UDP_addr;
+  federate_UDP_addr.sin6_family = AF_INET6;
+  federate_UDP_addr.sin6_port   = htons(0u); // Port 0 indicates to bind that
+                                             // it can assign any port to this
+                                             // socket. This is okay because
+                                             // the port number is then sent
+                                             // to the RTI.
+  federate_UDP_addr.sin6_addr.s_addr = INADDR_ANY;
   if (bind(_lf_rti_socket_UDP, (struct sockaddr*)&federate_UDP_addr, sizeof(federate_UDP_addr)) < 0) {
     lf_print_error_system_failure("Failed to bind its UDP socket.");
   }
@@ -151,9 +150,9 @@ uint16_t setup_clock_synchronization_with_rti() {
     // That will disable clock synchronization.
     lf_print_error_system_failure("Failed to retrieve UDP port.");
   }
-  LF_PRINT_DEBUG("Assigned UDP port number %u to its socket.", ntohs(federate_UDP_addr.sin_port));
+  LF_PRINT_DEBUG("Assigned UDP port number %u to its socket.", ntohs(federate_UDP_addr.sin6_port));
 
-  port_to_return = ntohs(federate_UDP_addr.sin_port);
+  port_to_return = ntohs(federate_UDP_addr.sin6_port);
 
   // Set the option for this socket to reuse the same address
   int option_value = 1;
@@ -395,7 +394,7 @@ static void* listen_to_rti_UDP_thread(void* args) {
   // uses bind() to reserve that address, so recording it once is sufficient.
   bool connected = false;
   while (1) {
-    struct sockaddr_in RTI_UDP_addr;
+    struct sockaddr_in6 RTI_UDP_addr;
     socklen_t RTI_UDP_addr_length = sizeof(RTI_UDP_addr);
     ssize_t bytes_read = 0;
     // Read from the UDP socket
