@@ -1137,19 +1137,19 @@ static int32_t receive_and_check_fed_id_message(int* socket_id) {
   // The MSG_TYPE_FED_IDS message has the right federation ID.
 
   // Get the peer address from the connected socket_id. Then assign it as the federate's socket server.
-  struct sockaddr_in6 peer_addr;
+  lf_sockaddr peer_addr;
   socklen_t addr_len = sizeof(peer_addr);
   if (getpeername(*socket_id, (struct sockaddr*)&peer_addr, &addr_len) != 0) {
     lf_print_error("RTI failed to get peer address.");
   }
-  fed->server_ip_addr = peer_addr.sin6_addr;
+  fed->server_ip_addr = peer_addr.LF_SIN_ADDR;
 
 #if LOG_LEVEL >= LOG_LEVEL_DEBUG
   // Create the human readable format and copy that into
   // the .server_hostname field of the federate.
-  char str[INET6_ADDRSTRLEN + 1];
-  inet_ntop(AF_INET6, &fed->server_ip_addr, str, INET6_ADDRSTRLEN);
-  strncpy(fed->server_hostname, str, INET_ADDRSTRLEN);
+  char str[LF_INET_ADDRSTRLEN + 1];
+  inet_ntop(LF_AF, &fed->server_ip_addr, str, LF_INET_ADDRSTRLEN);
+  strncpy(fed->server_hostname, str, LF_INET_ADDRSTRLEN);
 
   LF_PRINT_DEBUG("RTI got address %s from federate %d.", fed->server_hostname, fed_id);
 #endif
@@ -1316,9 +1316,9 @@ static int receive_udp_message_and_set_up_clock_sync(int* socket_id, uint16_t fe
         // If no runtime clock sync, no need to set up the UDP port.
         if (federate_UDP_port_number > 0) {
           // Initialize the UDP_addr field of the federate struct
-          fed->UDP_addr.sin6_family = AF_INET;
-          fed->UDP_addr.sin6_port   = htons(federate_UDP_port_number);
-          fed->UDP_addr.sin6_addr   = fed->server_ip_addr;
+          fed->UDP_addr.LF_SIN_FAM  = LF_AF;
+          fed->UDP_addr.LF_SIN_PORT = htons(federate_UDP_port_number);
+          fed->UDP_addr.LF_SIN_ADDR = fed->server_ip_addr;
         }
       } else {
         // Disable clock sync after initial round.
@@ -1494,8 +1494,7 @@ void initialize_federate(federate_info_t* fed, uint16_t id) {
   fed->socket = -1; // No socket.
   fed->clock_synchronization_enabled = true;
   fed->in_transit_message_tags = pqueue_tag_init(10);
-  strncpy(fed->server_hostname, "::1", INET6_ADDRSTRLEN); // Connect to localhost.
-  memset(&fed->server_ip_addr, 0, sizeof(fed->server_ip_addr));
+  LF_SET_LOCALHOST(fed);
   fed->server_port = -1;
 }
 

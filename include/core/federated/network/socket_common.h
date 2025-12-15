@@ -18,6 +18,70 @@
 #include "low_level_platform.h"
 
 /**
+ * @brief Whether to use IPv6 addresses.
+ * @ingroup Federated
+ *
+ * This is used to determine whether to create IPv4 or IPv6 sockets.
+ * For federated zephyr targets, this must be set to `true` as zephyr
+ * uses 6LoWPAN for wireless communication, which is based on IPv6.
+ */
+#define USE_IPV6 true
+
+/**
+ * Abstract socket types and macros used in the federated framework.
+ *
+ * lf_sockaddr: abstracts sockaddr_in / sockaddr_in6 depending on USE_IPV6.
+ * lf_ip_addr: abstracts in_addr / in6_addr depending on USE_IPV6.
+ *
+ * Macros: LF_AF, LF_SIN_ADDR, LF_ADDR_ANY, LF_LOCALHOST, LF_SET_LOCALHOST
+ * allow writing portable IPv4/IPv6 code.
+ *
+ * USE_IPV6 selects the concrete type at compile time.
+ *
+ * LF_SET_LOCALHOST macro sets the server_hostname and server_ip_addr fields
+ * of a federate_info_t struct to represent the localhost address.
+ *
+ * @ingroup Federated
+ */
+#if USE_IPV6
+  typedef struct sockaddr_in6 lf_sockaddr;
+  typedef struct in6_addr     lf_ip_addr;
+
+  #define LF_INET_ADDRSTRLEN INET6_ADDRSTRLEN
+  #define LF_LOCALHOST       "::1"
+
+  #define LF_AF        AF_INET6
+  #define LF_SIN_FAM   sin6_family
+  #define LF_SIN_PORT  sin6_port
+  #define LF_SIN_ADDR  sin6_addr
+  #define LF_ADDR_ANY  in6addr_any
+
+  #define LF_SET_LOCALHOST(fed)                                          \
+    do {                                                                 \
+      strncpy((fed)->server_hostname, LF_LOCALHOST, LF_INET_ADDRSTRLEN); \
+      memset(&(fed)->server_ip_addr, 0, sizeof((fed)->server_ip_addr));  \
+    } while (0)
+#else
+  typedef struct sockaddr_in  lf_sockaddr;
+  typedef struct in_addr      lf_ip_addr;
+
+  #define LF_INET_ADDRSTRLEN INET_ADDRSTRLEN
+  #define LF_LOCALHOST       "localhost"
+
+  #define LF_AF        AF_INET
+  #define LF_SIN_FAM   sin_family
+  #define LF_SIN_PORT  sin_port
+  #define LF_SIN_ADDR  sin_addr
+  #define LF_ADDR_ANY  ((struct in_addr){INADDR_ANY})
+
+  #define LF_SET_LOCALHOST(fed)                                          \
+    do {                                                                 \
+      strncpy((fed)->server_hostname, LF_LOCALHOST, LF_INET_ADDRSTRLEN); \
+      (fed)->server_ip_addr.s_addr = 0;                                  \
+    } while (0)
+#endif
+
+/**
  * @brief The number of federates.
  * @ingroup Federated
  *

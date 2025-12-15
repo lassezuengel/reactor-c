@@ -1726,7 +1726,7 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
   // The size is what is needed for receiving replies.
   unsigned char buffer[sizeof(int32_t) + INET_ADDRSTRLEN + 1];
   int port = -1;
-  struct in6_addr host_ip_addr;
+  lf_ip_addr host_ip_addr;
   instant_t start_connect = lf_time_physical();
   while (port == -1 && !_lf_termination_executed) {
     buffer[0] = MSG_TYPE_ADDRESS_QUERY;
@@ -1776,8 +1776,8 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
   assert(port > 0);
   uint16_t uport = (uint16_t)port;
 
-  char hostname[INET6_ADDRSTRLEN];
-  inet_ntop(AF_INET6, &host_ip_addr, hostname, INET6_ADDRSTRLEN);
+  char hostname[LF_INET_ADDRSTRLEN];
+  inet_ntop(LF_AF, &host_ip_addr, hostname, LF_INET_ADDRSTRLEN);
   int socket_id = create_real_time_tcp_socket_errexit();
   if (connect_to_socket(socket_id, (const char*)hostname, uport) < 0) {
     lf_print_error_and_exit("Failed to connect() to RTI.");

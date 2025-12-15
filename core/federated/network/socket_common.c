@@ -25,7 +25,7 @@
 lf_mutex_t shutdown_mutex;
 
 int create_real_time_tcp_socket_errexit() {
-  int sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+  int sock = socket(LF_AF, SOCK_STREAM, IPPROTO_TCP);
   if (sock < 0) {
     lf_print_error_system_failure("Could not open TCP socket.");
   }
@@ -83,16 +83,16 @@ static void set_socket_timeout_option(int socket_descriptor, struct timeval* tim
  */
 static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port, bool increment_port_on_retry) {
   // Server file descriptor.
-  struct sockaddr_in6 server_fd;
+  lf_sockaddr server_fd;
   // Zero out the server address structure.
   memset(&server_fd, 0, sizeof(server_fd));
   uint16_t used_port = specified_port;
   if (specified_port == 0 && increment_port_on_retry == true) {
     used_port = DEFAULT_PORT;
   }
-  server_fd.sin6_family = AF_INET6;         // IPv6
-  server_fd.sin6_addr   = in6addr_any; // All interfaces, ::0.
-  server_fd.sin6_port   = htons(used_port);  // Convert the port number from host byte order to network byte order.
+  server_fd.LF_SIN_FAM  = LF_AF;            // IPv4 or IPv6, depending on configuration.
+  server_fd.LF_SIN_ADDR = LF_ADDR_ANY;      // All interfaces, ::0.
+  server_fd.LF_SIN_PORT = htons(used_port); // Convert the port number from host byte order to network byte order.
 
   int result = bind(socket_descriptor, (struct sockaddr*)&server_fd, sizeof(server_fd));
 
@@ -107,7 +107,7 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
       if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES)
         used_port = DEFAULT_PORT;
       lf_print_warning("RTI will try again with port %d.", used_port);
-      server_fd.sin6_port = htons(used_port);
+      server_fd.LF_SIN_PORT = htons(used_port);
       // Do not sleep.
     } else {
       lf_print("Failed to bind socket on port %d. Will try again.", used_port);
@@ -119,12 +119,12 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
   // Set the global server port.
   if (specified_port == 0 && increment_port_on_retry == false) {
     // Need to retrieve the port number assigned by the OS.
-    struct sockaddr_in6 assigned;
+    lf_sockaddr assigned;
     socklen_t addr_len = sizeof(assigned);
     if (getsockname(socket_descriptor, (struct sockaddr*)&assigned, &addr_len) < 0) {
       lf_print_error_and_exit("Federate failed to retrieve assigned port number.");
     }
-    used_port = ntohs(assigned.sin6_port);
+    used_port = ntohs(assigned.LF_SIN_PORT);
   }
   if (result != 0) {
     lf_print_error_and_exit("Failed to bind the socket. Port %d is not available. ", used_port);
@@ -145,7 +145,7 @@ int create_server(uint16_t port, int* final_socket, uint16_t* final_port, socket
         (struct timeval){.tv_sec = TCP_TIMEOUT_TIME / BILLION, .tv_usec = (TCP_TIMEOUT_TIME % BILLION) / 1000};
   } else {
     // Create a UDP socket.
-    socket_descriptor = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+    socket_descriptor = socket(LF_AF, SOCK_DGRAM, IPPROTO_UDP);
     timeout_time =
         (struct timeval){.tv_sec = UDP_TIMEOUT_TIME / BILLION, .tv_usec = (UDP_TIMEOUT_TIME % BILLION) / 1000};
   }
@@ -224,7 +224,7 @@ int connect_to_socket(int sock, const char* hostname, int port) {
   int ret = -1;
 
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET6;       /* Allow IPv6 */
+  hints.ai_family = LF_AF;         /* Allow IPv6 */
   hints.ai_socktype = SOCK_STREAM; /* Stream socket */
   hints.ai_protocol = IPPROTO_TCP; /* TCP protocol */
   hints.ai_addr = NULL;
