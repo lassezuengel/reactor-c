@@ -7,6 +7,14 @@ set(IncludeDir ../../../include/core)
 set(RTI_LIB rti_lib)
 set(RTI_MAIN RTI)
 
+option(LF_RTI_USE_IPV6 "Use IPv6 instead of IPv4" OFF)
+
+if(LF_RTI_USE_IPV6)
+    add_compile_definitions(USE_IPV6=1)
+else()
+    add_compile_definitions(USE_IPV6=0)
+endif()
+
 # Add common RTI functionality to a static library. This is done to simplify
 # the building of unit tests.
 add_library(${RTI_LIB} STATIC
@@ -120,7 +128,7 @@ execute_process(
 string(TIMESTAMP RTI_BUILD_DATE "%Y-%m-%d")
 
 # Add compile definitions for versioning
-target_compile_definitions(${RTI_LIB} PUBLIC 
+target_compile_definitions(${RTI_LIB} PUBLIC
     RTI_VERSION="${RTI_VERSION}"
     RTI_COMMIT="${RTI_COMMIT}"
     RTI_BUILD_DATE="${RTI_BUILD_DATE}"

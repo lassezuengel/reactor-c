@@ -17,15 +17,19 @@
 
 #include "low_level_platform.h"
 
-/**
- * @brief Whether to use IPv6 addresses.
- * @ingroup Federated
- *
- * This is used to determine whether to create IPv4 or IPv6 sockets.
- * For federated zephyr targets, this must be set to `true` as zephyr
- * uses 6LoWPAN for wireless communication, which is based on IPv6.
- */
-#define USE_IPV6 true
+#ifndef USE_IPV6
+  /**
+   * @brief Whether to use IPv6 addresses.
+   * @ingroup Federated
+   *
+   * This is used to determine whether to create IPv4 or IPv6 sockets.
+   * For federated zephyr targets, this must be set to `true` as zephyr
+   * uses 6LoWPAN for wireless communication, which is based on IPv6.
+   *
+   * For the RTI, this can be configured via the build system (CMake).
+   */
+  #define USE_IPV6 0
+#endif
 
 /**
  * Abstract socket types and macros used in the federated framework.
