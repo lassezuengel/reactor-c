@@ -15,6 +15,11 @@
 
 #ifdef PLATFORM_ZEPHYR
 #include <zephyr/net/socket.h>
+#include <zephyr/net/net_mgmt.h>
+
+#define EVENT_MASK (NET_EVENT_L4_CONNECTED | NET_EVENT_L4_DISCONNECTED)
+K_SEM_DEFINE(run_lf_fed, 0, 1);
+static struct net_mgmt_event_callback mgmt_cb;
 #else
 #include <netinet/in.h> // Defines struct sockaddr_in
 #include <arpa/inet.h>  // inet_ntop & inet_pton
@@ -2671,5 +2676,42 @@ instant_t lf_wait_until_time(tag_t tag) {
   return result;
 }
 #endif // FEDERATED_DECENTRALIZED
+
+#ifdef PLATFORM_ZEPHYR
+void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
+                                         uint32_t mgmt_event, struct net_if *iface) {
+  ARG_UNUSED(iface);
+  ARG_UNUSED(cb);
+
+  if ((mgmt_event & EVENT_MASK) != mgmt_event) {
+    return;
+  }
+
+  if (mgmt_event == NET_EVENT_L4_CONNECTED) {
+    k_sem_give(&run_lf_fed);
+
+    return;
+  }
+
+  if (mgmt_event == NET_EVENT_L4_DISCONNECTED) {
+    k_sem_reset(&run_lf_fed);
+
+    return;
+  }
+}
+
+void init_connection_manager(void) {
+  if (IS_ENABLED(CONFIG_NET_CONNECTION_MANAGER)) {
+    net_mgmt_init_event_callback(&mgmt_cb,
+                                 lf_connection_manager_event_handler,
+                                 EVENT_MASK);
+    net_mgmt_add_event_callback(&mgmt_cb);
+
+    conn_mgr_mon_resend_status();
+  } else {
+    k_sem_give(&run_lf_fed);
+  }
+}
+#endif // PLATFORM_ZEPHYR
 
 #endif // FEDERATED
