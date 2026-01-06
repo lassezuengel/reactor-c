@@ -2712,6 +2712,10 @@ void init_connection_manager(void) {
     k_sem_give(&run_lf_fed);
   }
 }
+
+void lf_wait_for_network_connection(void) {
+  k_sem_take(&run_lf_fed, K_FOREVER);
+}
 #endif // PLATFORM_ZEPHYR
 
 #endif // FEDERATED

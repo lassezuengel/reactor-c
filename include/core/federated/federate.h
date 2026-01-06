@@ -620,6 +620,12 @@ void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
  * @ingroup Federated
  */
 void lf_init_connection_manager(void);
+
+/**
+ * @brief Wait for network connection to be established.
+ * @ingroup Federated
+ */
+void lf_wait_for_network_connection(void);
 #endif // PLATFORM_ZEPHYR
 
 #endif // FEDERATE_H
