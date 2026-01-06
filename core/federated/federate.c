@@ -2678,8 +2678,15 @@ instant_t lf_wait_until_time(tag_t tag) {
 #endif // FEDERATED_DECENTRALIZED
 
 #ifdef PLATFORM_ZEPHYR
-void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
-                                         uint32_t mgmt_event, struct net_if *iface) {
+/**
+ * @brief Event handler for connection manager events.
+ * @ingroup Federated
+ * @todo We need to handle more events, such as auto-configuration of IPv6 addresses!
+ *
+ * @param mgmt_event The management event.
+ */
+static void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
+                                                uint32_t mgmt_event, struct net_if *iface) {
   ARG_UNUSED(iface);
   ARG_UNUSED(cb);
 
@@ -2700,7 +2707,7 @@ void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
   }
 }
 
-void init_connection_manager(void) {
+void lf_init_connection_manager(void) {
   if (IS_ENABLED(CONFIG_NET_CONNECTION_MANAGER)) {
     net_mgmt_init_event_callback(&mgmt_cb,
                                  lf_connection_manager_event_handler,

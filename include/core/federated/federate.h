@@ -606,16 +606,6 @@ instant_t lf_wait_until_time(tag_t tag);
 
 #ifdef PLATFORM_ZEPHYR
 /**
- * @brief Event handler for connection manager events.
- * @ingroup Federated
- * @todo We need to handle more events, such as auto-configuration of IPv6 addresses!
- *
- * @param mgmt_event The management event.
- */
-void lf_connection_manager_event_handler(struct net_mgmt_event_callback *cb,
-                                         uint32_t mgmt_event, struct net_if *iface);
-
-/**
  * @brief Initialize the connection manager. This is to be done before starting any federation.
  * @ingroup Federated
  */
