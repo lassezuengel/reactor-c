@@ -14,6 +14,9 @@
 #endif
 
 #ifdef PLATFORM_ZEPHYR
+#include <zephyr/kernel.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_ip.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/net_mgmt.h>
 
@@ -1762,6 +1765,8 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
     }
     port = extract_int32(&buffer[1]);
 
+    lf_print_log("Received address query reply from RTI for federate %d: port %d.", remote_federate_id, port);
+
     read_from_socket_fail_on_error(&_fed.socket_TCP_RTI, sizeof(host_ip_addr), (unsigned char*)&host_ip_addr,
                                    "Failed to read the IP address for federate %d from RTI.", remote_federate_id);
 
@@ -1783,9 +1788,9 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
 
   char hostname[LF_INET_ADDRSTRLEN];
   inet_ntop(LF_AF, &host_ip_addr, hostname, LF_INET_ADDRSTRLEN);
-  int socket_id = create_real_time_tcp_socket_errexit();
-  if (connect_to_socket(socket_id, (const char*)hostname, uport) < 0) {
-    lf_print_error_and_exit("Failed to connect() to RTI.");
+  int socket_id = connect_to_socket_with_retry((const char*)hostname, uport);
+  if (socket_id < 0) {
+    lf_print_error_and_exit("Failed to connect() to federate.");
   }
   // Iterate until we either successfully connect or we exceed the CONNECT_TIMEOUT
   start_connect = lf_time_physical();
@@ -1853,7 +1858,8 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
 }
 
 void lf_connect_to_rti(const char* hostname, int port) {
-  LF_PRINT_LOG("Connecting to the RTI.");
+  // printk("****** lf_connect_to_rti ******\n");
+  LF_PRINT_LOG("Connecting to the RTI with hostname %s and port %d.", hostname, port);
 
   // Override passed hostname and port if passed as runtime arguments.
   hostname = federation_metadata.rti_host ? federation_metadata.rti_host : hostname;
@@ -1864,6 +1870,8 @@ void lf_connect_to_rti(const char* hostname, int port) {
   if (connect_to_socket(_fed.socket_TCP_RTI, hostname, port) < 0) {
     lf_print_error_and_exit("Failed to connect() to RTI.");
   }
+
+  LF_PRINT_LOG("Connected to RTI!");
 
   instant_t start_connect = lf_time_physical();
   while (!CHECK_TIMEOUT(start_connect, CONNECT_TIMEOUT) && !_lf_termination_executed) {
@@ -1972,6 +1980,7 @@ void lf_create_server(int specified_port) {
   };
 
   LF_PRINT_LOG("Server for communicating with other federates started using port %u.", final_port);
+  // printk("****** Server for communicating with other federates started using port %u. ******\n", final_port);
   _fed.server_port = final_port;
 
   // Send the server port number to the RTI
@@ -1988,6 +1997,22 @@ void lf_create_server(int specified_port) {
                                 "Failed to send address advertisement.");
 
   LF_PRINT_DEBUG("Sent port %d to the RTI.", _fed.server_port);
+  // printk("****** server created with port %d ******\n", _fed.server_port);
+
+  // After creating server socket
+  struct sockaddr_in6 addr;
+  socklen_t addr_len = sizeof(addr);
+  getsockname(_fed.server_socket, (struct sockaddr*)&addr, &addr_len);
+
+  char addr_str[INET6_ADDRSTRLEN];
+  inet_ntop(AF_INET6, &addr.sin6_addr, addr_str, sizeof(addr_str));
+  LF_PRINT_DEBUG("Server socket bound to [%s]:%d", addr_str, ntohs(addr.sin6_port));
+
+  // Check socket state
+  int sock_type;
+  socklen_t opt_len = sizeof(sock_type);
+  getsockopt(_fed.server_socket, SOL_SOCKET, SO_TYPE, &sock_type, &opt_len);
+  LF_PRINT_DEBUG("Socket type: %d (should be %d for STREAM)", sock_type, SOCK_STREAM);
 }
 
 void lf_enqueue_port_absent_reactions(environment_t* env) {
@@ -2015,11 +2040,21 @@ void lf_enqueue_port_absent_reactions(environment_t* env) {
 }
 
 void* lf_handle_p2p_connections_from_federates(void* env_arg) {
+  // printk("****** lf_handle_p2p_connections_from_federates started ******\n");
+  lf_print_log("Thread started to handle incoming P2P connections from remote federates.");
   LF_ASSERT_NON_NULL(env_arg);
   size_t received_federates = 0;
+
+  // printk("****** allocating memory for inbound_socket_listeners (%d) ******\n", _fed.number_of_inbound_p2p_connections);
   // Allocate memory to store thread IDs.
   _fed.inbound_socket_listeners = (lf_thread_t*)calloc(_fed.number_of_inbound_p2p_connections, sizeof(lf_thread_t));
+
+  // printk("****** entering while loop to accept incoming P2P connections ******\n");
   while (received_federates < _fed.number_of_inbound_p2p_connections && !_lf_termination_executed) {
+    // printk("****** waiting for incoming P2P connection on server socket %d ******\n", _fed.server_socket);
+    lf_print_debug("Waiting for incoming P2P connection from remote federate on server socket %d.",
+                   _fed.server_socket);
+
     // Wait for an incoming connection request.
     int socket_id = accept_socket(_fed.server_socket, _fed.socket_TCP_RTI);
     if (socket_id < 0) {
@@ -2678,6 +2713,31 @@ instant_t lf_wait_until_time(tag_t tag) {
 #endif // FEDERATED_DECENTRALIZED
 
 #ifdef PLATFORM_ZEPHYR
+void dump_ipv6_addrs(struct net_if *iface)
+{
+    struct net_if_ipv6 *ipv6 = iface->config.ip.ipv6;
+
+    if (!ipv6) {
+        lf_print("IPv6 not enabled on interface\n");
+        return;
+    }
+
+    for (int i = 0; i < NET_IF_MAX_IPV6_ADDR; i++) {
+        struct net_if_addr *ifaddr = &ipv6->unicast[i];
+
+        if (ifaddr->is_used) {
+            char buf[NET_IPV6_ADDR_LEN];
+
+            net_addr_ntop(AF_INET6,
+                          &ifaddr->address.in6_addr,
+                          buf, sizeof(buf));
+
+            lf_print("IPv6[%d]: %s (state=%d)\n",
+                     i, buf, ifaddr->addr_state);
+        }
+    }
+}
+
 /**
  * @brief Event handler for connection manager events.
  * @ingroup Federated
@@ -2695,6 +2755,9 @@ static void lf_connection_manager_event_handler(struct net_mgmt_event_callback *
   }
 
   if (mgmt_event == NET_EVENT_L4_CONNECTED) {
+    // printk("Network connected.\n");
+    dump_ipv6_addrs(net_if_get_default());
+
     k_sem_give(&run_lf_fed);
 
     return;

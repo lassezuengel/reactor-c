@@ -17,6 +17,7 @@
 #include "low_level_platform.h"
 #include "reactor_common.h"
 #include "environment.h"
+#include "federated/federate.h"
 
 // Embedded platforms with no command line interface shouldnt have signals
 #if !defined(NO_CLI)

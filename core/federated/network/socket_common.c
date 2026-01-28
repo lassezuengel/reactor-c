@@ -90,6 +90,7 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
   if (specified_port == 0 && increment_port_on_retry == true) {
     used_port = DEFAULT_PORT;
   }
+
   server_fd.LF_SIN_FAM  = LF_AF;            // IPv4 or IPv6, depending on configuration.
   server_fd.LF_SIN_ADDR = LF_ADDR_ANY;      // All interfaces, ::0.
   server_fd.LF_SIN_PORT = htons(used_port); // Convert the port number from host byte order to network byte order.
@@ -118,6 +119,24 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
 
   // Set the global server port.
   if (specified_port == 0 && increment_port_on_retry == false) {
+#ifdef PLATFORM_ZEPHYR
+    // When binding to port 0 on Zephyr, we must specify a port number
+    // that is not already in use. Zephyr does not support retrieving
+    // the assigned port after binding like other platforms.
+    // TODO: This is a workaround. In a real application, we should
+    // implement a better mechanism to manage dynamic port assignments.
+    used_port = 4242;
+    lf_print_warning("No automatic port binding on Zephyr. Using port %d instead.", used_port);
+    lf_print_warning("  This WILL cause issues with multiple p2p connections.");
+
+    server_fd.LF_SIN_PORT = htons(used_port);
+    result = bind(socket_descriptor, (struct sockaddr*)&server_fd, sizeof(server_fd));
+    if (result != 0) {
+      lf_print_error_and_exit("Failed to bind the socket to Zephyr workaround port %d: %s",
+                              used_port, strerror(errno));
+    }
+#else
+    lf_print_debug("Port was set to 0, querying OS for the automatically assigned available port.");
     // Need to retrieve the port number assigned by the OS.
     lf_sockaddr assigned;
     socklen_t addr_len = sizeof(assigned);
@@ -125,6 +144,7 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
       lf_print_error_and_exit("Federate failed to retrieve assigned port number.");
     }
     used_port = ntohs(assigned.LF_SIN_PORT);
+#endif
   }
   if (result != 0) {
     lf_print_error_and_exit("Failed to bind the socket. Port %d is not available. ", used_port);
@@ -138,7 +158,7 @@ int create_server(uint16_t port, int* final_socket, uint16_t* final_port, socket
   int socket_descriptor;
   struct timeval timeout_time;
   if (sock_type == TCP) {
-    // Create an IPv4 socket for TCP.
+    // Create an IPv4/IPv6 socket for TCP.
     socket_descriptor = create_real_time_tcp_socket_errexit();
     // Set the timeout time for the communications of the server
     timeout_time =
@@ -224,7 +244,7 @@ int connect_to_socket(int sock, const char* hostname, int port) {
   int ret = -1;
 
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = LF_AF;         /* Allow IPv6 */
+  hints.ai_family = LF_AF;         /* Allow either IPv4 or IPv6 */
   hints.ai_socktype = SOCK_STREAM; /* Stream socket */
   hints.ai_protocol = IPPROTO_TCP; /* TCP protocol */
   hints.ai_addr = NULL;
@@ -244,15 +264,20 @@ int connect_to_socket(int sock, const char* hostname, int port) {
     char str[6];
     snprintf(str, sizeof(str), "%u", used_port);
 
+    LF_PRINT_LOG("Trying to connect to %s:%d...", hostname, used_port);
+
     // Get address structure matching hostname and hints criteria, and
     // set port to the port number provided in str. There should only
     // ever be one matching address structure, and we connect to that.
     if (getaddrinfo(hostname, (const char*)&str, &hints, &result)) {
       lf_print_error("No host matching given hostname: %s", hostname);
       break;
+    } else {
+      LF_PRINT_DEBUG("Resolved hostname %s.", hostname);
     }
     ret = connect(sock, result->ai_addr, result->ai_addrlen);
     if (ret < 0) {
+      LF_PRINT_DEBUG("Could not connect to %s:%d. Error: `%s`", hostname, used_port, strerror(errno));
       lf_sleep(CONNECT_RETRY_INTERVAL);
       if (port == 0) {
         used_port++;
@@ -262,15 +287,98 @@ int connect_to_socket(int sock, const char* hostname, int port) {
       }
       lf_print_warning("Could not connect. Will try again every " PRINTF_TIME " nanoseconds. Connecting to port %d.\n",
                        CONNECT_RETRY_INTERVAL, used_port);
+      LF_PRINT_DEBUG("Freeing address info for hostname %s.", hostname);
       freeaddrinfo(result);
       continue;
     } else {
+      LF_PRINT_DEBUG("Connected to %s:%d.", hostname, used_port);
       break;
     }
   }
+
+  LF_PRINT_DEBUG("Freeing address info for hostname %s.", hostname);
   freeaddrinfo(result);
+  LF_PRINT_LOG("Connected to %s:%d.", hostname, used_port);
   lf_print("Connected to %s:%d.", hostname, used_port);
   return ret;
+}
+
+int connect_to_socket_with_retry(const char* hostname, int port) {
+  lf_print_log("connect_to_socket_with_retry to %s:%d...", hostname, port);
+  struct addrinfo hints;
+  struct addrinfo* result;
+  int ret = -1;
+  int sock = -1;
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = LF_AF;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
+  hints.ai_addr = NULL;
+  hints.ai_next = NULL;
+  hints.ai_flags = AI_NUMERICSERV;
+
+  uint16_t used_port = (port == 0) ? DEFAULT_PORT : (uint16_t)port;
+  instant_t start_connect = lf_time_physical();
+
+  while (1) {
+    if (CHECK_TIMEOUT(start_connect, CONNECT_TIMEOUT)) {
+      lf_print_error("Failed to connect with timeout: " PRINTF_TIME ". Giving up.", CONNECT_TIMEOUT);
+      if (sock >= 0) {
+        close(sock);
+      }
+      return -1;
+    }
+
+    // Create a new socket for each connection attempt
+    if (sock >= 0) {
+      close(sock);
+    }
+    sock = create_real_time_tcp_socket_errexit();
+
+    char str[6];
+    snprintf(str, sizeof(str), "%u", used_port);
+    LF_PRINT_LOG("Trying to connect to %s:%d...", hostname, used_port);
+
+    if (getaddrinfo(hostname, (const char*)&str, &hints, &result)) {
+      lf_print_error("No host matching given hostname: %s", hostname);
+      close(sock);
+      return -1;
+    } else {
+      LF_PRINT_DEBUG("Resolved hostname %s.", hostname);
+    }
+
+    ret = connect(sock, result->ai_addr, result->ai_addrlen);
+
+    if (ret < 0) {
+      LF_PRINT_DEBUG("Could not connect to %s:%d. Error: `%s`", hostname, used_port, strerror(errno));
+      freeaddrinfo(result);
+
+      lf_sleep(CONNECT_RETRY_INTERVAL);
+      if (port == 0) {
+        used_port++;
+        if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES) {
+          used_port = DEFAULT_PORT;
+        }
+      }
+      lf_print_warning("Could not connect. Will try again every " PRINTF_TIME " nanoseconds. Connecting to port %d.\n",
+                       CONNECT_RETRY_INTERVAL, used_port);
+      // Socket will be closed at the top of next iteration
+      continue;
+    } else {
+      // SUCCESS!
+      LF_PRINT_DEBUG("Connected to %s:%d.", hostname, used_port);
+      freeaddrinfo(result);
+      LF_PRINT_LOG("Connected to %s:%d.", hostname, used_port);
+      return sock;  // Return valid connected socket
+    }
+  }
+
+  // Should never reach here
+  if (sock >= 0) {
+    close(sock);
+  }
+  return -1;
 }
 
 int read_from_socket(int socket, size_t num_bytes, unsigned char* buffer) {

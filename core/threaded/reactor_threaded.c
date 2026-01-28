@@ -1022,6 +1022,11 @@ int lf_reactor_c_main(int argc, const char* argv[]) {
     return -1;
   }
 
+#if defined(FEDERATED) && defined(PLATFORM_ZEPHYR)
+  lf_set_federation_id(42);
+  lf_print_warning("Forced federation ID to 42 for federated zephyr!\n");
+#endif
+
   // Register the termination function
   if (atexit(termination) != 0) {
     lf_print_warning("Failed to register termination function!");

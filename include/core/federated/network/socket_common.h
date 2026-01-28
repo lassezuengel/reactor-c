@@ -256,6 +256,16 @@ int accept_socket(int socket, int rti_socket);
 int connect_to_socket(int sock, const char* hostname, int port);
 
 /**
+ * @brief Attempt to establish a TCP connection to the specified hostname and port with retries.
+ * @ingroup Federated
+ *
+ * @param hostname The hostname or IP address of the server to connect to.
+ * @param port The port number to connect to. If 0 is specified, a default port range will be used.
+ * @return The connected socket file descriptor on success, or -1 on failure.
+ */
+int connect_to_socket_with_retry(const char* hostname, int port);
+
+/**
  * @brief Read the specified number of bytes from the specified socket into the specified buffer.
  * @ingroup Federated
  *
