@@ -1788,7 +1788,7 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
 
   char hostname[LF_INET_ADDRSTRLEN];
   inet_ntop(LF_AF, &host_ip_addr, hostname, LF_INET_ADDRSTRLEN);
-  int socket_id = connect_to_socket_with_retry((const char*)hostname, uport);
+  int socket_id = connect_to_fresh_socket((const char*)hostname, uport);
   if (socket_id < 0) {
     lf_print_error_and_exit("Failed to connect() to federate.");
   }
@@ -1858,7 +1858,6 @@ void lf_connect_to_federate(uint16_t remote_federate_id) {
 }
 
 void lf_connect_to_rti(const char* hostname, int port) {
-  // printk("****** lf_connect_to_rti ******\n");
   LF_PRINT_LOG("Connecting to the RTI with hostname %s and port %d.", hostname, port);
 
   // Override passed hostname and port if passed as runtime arguments.
@@ -1980,7 +1979,6 @@ void lf_create_server(int specified_port) {
   };
 
   LF_PRINT_LOG("Server for communicating with other federates started using port %u.", final_port);
-  // printk("****** Server for communicating with other federates started using port %u. ******\n", final_port);
   _fed.server_port = final_port;
 
   // Send the server port number to the RTI
@@ -1997,7 +1995,6 @@ void lf_create_server(int specified_port) {
                                 "Failed to send address advertisement.");
 
   LF_PRINT_DEBUG("Sent port %d to the RTI.", _fed.server_port);
-  // printk("****** server created with port %d ******\n", _fed.server_port);
 
   // After creating server socket
   struct sockaddr_in6 addr;
@@ -2040,18 +2037,14 @@ void lf_enqueue_port_absent_reactions(environment_t* env) {
 }
 
 void* lf_handle_p2p_connections_from_federates(void* env_arg) {
-  // printk("****** lf_handle_p2p_connections_from_federates started ******\n");
   lf_print_log("Thread started to handle incoming P2P connections from remote federates.");
   LF_ASSERT_NON_NULL(env_arg);
   size_t received_federates = 0;
 
-  // printk("****** allocating memory for inbound_socket_listeners (%d) ******\n", _fed.number_of_inbound_p2p_connections);
   // Allocate memory to store thread IDs.
   _fed.inbound_socket_listeners = (lf_thread_t*)calloc(_fed.number_of_inbound_p2p_connections, sizeof(lf_thread_t));
 
-  // printk("****** entering while loop to accept incoming P2P connections ******\n");
   while (received_federates < _fed.number_of_inbound_p2p_connections && !_lf_termination_executed) {
-    // printk("****** waiting for incoming P2P connection on server socket %d ******\n", _fed.server_socket);
     lf_print_debug("Waiting for incoming P2P connection from remote federate on server socket %d.",
                    _fed.server_socket);
 
@@ -2755,7 +2748,6 @@ static void lf_connection_manager_event_handler(struct net_mgmt_event_callback *
   }
 
   if (mgmt_event == NET_EVENT_L4_CONNECTED) {
-    // printk("Network connected.\n");
     dump_ipv6_addrs(net_if_get_default());
 
     k_sem_give(&run_lf_fed);

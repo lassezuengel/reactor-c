@@ -82,32 +82,47 @@ static void set_socket_timeout_option(int socket_descriptor, struct timeval* tim
  * @return The final port number used.
  */
 static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port, bool increment_port_on_retry) {
-  // Server file descriptor.
   lf_sockaddr server_fd;
-  // Zero out the server address structure.
   memset(&server_fd, 0, sizeof(server_fd));
   uint16_t used_port = specified_port;
+
+#ifdef PLATFORM_ZEPHYR
+  // On Zephyr, treat port 0 request as "start from 4242 and increment".
+  // This needs to be done as the automatic port assignment is not supported on Zephyr.
+  if (specified_port == 0) {
+    used_port = 4242;
+    increment_port_on_retry = true;  // Force retry behavior
+    lf_print_log("No automatic port binding on Zephyr. Starting from port %d.", used_port);
+  } else
+#endif
   if (specified_port == 0 && increment_port_on_retry == true) {
     used_port = DEFAULT_PORT;
   }
 
-  server_fd.LF_SIN_FAM  = LF_AF;            // IPv4 or IPv6, depending on configuration.
-  server_fd.LF_SIN_ADDR = LF_ADDR_ANY;      // All interfaces, ::0.
-  server_fd.LF_SIN_PORT = htons(used_port); // Convert the port number from host byte order to network byte order.
+  server_fd.LF_SIN_FAM  = LF_AF;
+  server_fd.LF_SIN_ADDR = LF_ADDR_ANY;
+  server_fd.LF_SIN_PORT = htons(used_port);
 
   int result = bind(socket_descriptor, (struct sockaddr*)&server_fd, sizeof(server_fd));
 
   // Try repeatedly to bind to a port.
   int count = 1;
   while (result != 0 && count++ < PORT_BIND_RETRY_LIMIT) {
+#ifdef PLATFORM_ZEPHYR
+    if (increment_port_on_retry == true) {
+#else
     if (specified_port == 0 && increment_port_on_retry == true) {
-      //  If the specified port number is zero, and the increment_port_on_retry is true, increment the port number each
-      //  time.
-      lf_print_warning("RTI failed to get port %d.", used_port);
+#endif
+      lf_print_warning("Failed to get port %d.", used_port);
       used_port++;
+#ifdef PLATFORM_ZEPHYR
+      if (used_port >= 4242 + MAX_NUM_PORT_ADDRESSES)
+        used_port = 4242;
+#else
       if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES)
         used_port = DEFAULT_PORT;
-      lf_print_warning("RTI will try again with port %d.", used_port);
+#endif
+      lf_print_warning("Will try again with port %d.", used_port);
       server_fd.LF_SIN_PORT = htons(used_port);
       // Do not sleep.
     } else {
@@ -117,25 +132,8 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
     result = bind(socket_descriptor, (struct sockaddr*)&server_fd, sizeof(server_fd));
   }
 
-  // Set the global server port.
+    // Set the global server port.
   if (specified_port == 0 && increment_port_on_retry == false) {
-#ifdef PLATFORM_ZEPHYR
-    // When binding to port 0 on Zephyr, we must specify a port number
-    // that is not already in use. Zephyr does not support retrieving
-    // the assigned port after binding like other platforms.
-    // TODO: This is a workaround. In a real application, we should
-    // implement a better mechanism to manage dynamic port assignments.
-    used_port = 4242;
-    lf_print_warning("No automatic port binding on Zephyr. Using port %d instead.", used_port);
-    lf_print_warning("  This WILL cause issues with multiple p2p connections.");
-
-    server_fd.LF_SIN_PORT = htons(used_port);
-    result = bind(socket_descriptor, (struct sockaddr*)&server_fd, sizeof(server_fd));
-    if (result != 0) {
-      lf_print_error_and_exit("Failed to bind the socket to Zephyr workaround port %d: %s",
-                              used_port, strerror(errno));
-    }
-#else
     lf_print_debug("Port was set to 0, querying OS for the automatically assigned available port.");
     // Need to retrieve the port number assigned by the OS.
     lf_sockaddr assigned;
@@ -144,11 +142,11 @@ static int set_socket_bind_option(int socket_descriptor, uint16_t specified_port
       lf_print_error_and_exit("Federate failed to retrieve assigned port number.");
     }
     used_port = ntohs(assigned.LF_SIN_PORT);
-#endif
   }
   if (result != 0) {
-    lf_print_error_and_exit("Failed to bind the socket. Port %d is not available. ", used_port);
+    lf_print_error_and_exit("Failed to bind the socket. Port %d is not available.", used_port);
   }
+
   lf_print_debug("Socket is binded to port %d.", used_port);
   return used_port;
 }
@@ -303,82 +301,14 @@ int connect_to_socket(int sock, const char* hostname, int port) {
   return ret;
 }
 
-int connect_to_socket_with_retry(const char* hostname, int port) {
-  lf_print_log("connect_to_socket_with_retry to %s:%d...", hostname, port);
-  struct addrinfo hints;
-  struct addrinfo* result;
-  int ret = -1;
-  int sock = -1;
-
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family = LF_AF;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = IPPROTO_TCP;
-  hints.ai_addr = NULL;
-  hints.ai_next = NULL;
-  hints.ai_flags = AI_NUMERICSERV;
-
-  uint16_t used_port = (port == 0) ? DEFAULT_PORT : (uint16_t)port;
-  instant_t start_connect = lf_time_physical();
-
-  while (1) {
-    if (CHECK_TIMEOUT(start_connect, CONNECT_TIMEOUT)) {
-      lf_print_error("Failed to connect with timeout: " PRINTF_TIME ". Giving up.", CONNECT_TIMEOUT);
-      if (sock >= 0) {
-        close(sock);
-      }
-      return -1;
-    }
-
-    // Create a new socket for each connection attempt
-    if (sock >= 0) {
-      close(sock);
-    }
-    sock = create_real_time_tcp_socket_errexit();
-
-    char str[6];
-    snprintf(str, sizeof(str), "%u", used_port);
-    LF_PRINT_LOG("Trying to connect to %s:%d...", hostname, used_port);
-
-    if (getaddrinfo(hostname, (const char*)&str, &hints, &result)) {
-      lf_print_error("No host matching given hostname: %s", hostname);
-      close(sock);
-      return -1;
-    } else {
-      LF_PRINT_DEBUG("Resolved hostname %s.", hostname);
-    }
-
-    ret = connect(sock, result->ai_addr, result->ai_addrlen);
-
-    if (ret < 0) {
-      LF_PRINT_DEBUG("Could not connect to %s:%d. Error: `%s`", hostname, used_port, strerror(errno));
-      freeaddrinfo(result);
-
-      lf_sleep(CONNECT_RETRY_INTERVAL);
-      if (port == 0) {
-        used_port++;
-        if (used_port >= DEFAULT_PORT + MAX_NUM_PORT_ADDRESSES) {
-          used_port = DEFAULT_PORT;
-        }
-      }
-      lf_print_warning("Could not connect. Will try again every " PRINTF_TIME " nanoseconds. Connecting to port %d.\n",
-                       CONNECT_RETRY_INTERVAL, used_port);
-      // Socket will be closed at the top of next iteration
-      continue;
-    } else {
-      // SUCCESS!
-      LF_PRINT_DEBUG("Connected to %s:%d.", hostname, used_port);
-      freeaddrinfo(result);
-      LF_PRINT_LOG("Connected to %s:%d.", hostname, used_port);
-      return sock;  // Return valid connected socket
-    }
-  }
-
-  // Should never reach here
-  if (sock >= 0) {
+int connect_to_fresh_socket(const char* hostname, int port) {
+  int sock = create_real_time_tcp_socket_errexit();
+  int ret = connect_to_socket(sock, hostname, port);
+  if (ret < 0) {
     close(sock);
+    return -1;
   }
-  return -1;
+  return sock;
 }
 
 int read_from_socket(int socket, size_t num_bytes, unsigned char* buffer) {

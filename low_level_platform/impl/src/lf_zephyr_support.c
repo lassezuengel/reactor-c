@@ -82,11 +82,11 @@ int lf_enable_interrupts_nested() {
 #define NUMBER_OF_WATCHDOGS 0
 #endif
 
-#ifdef FEDERATED
-#define NUMBER_OF_P2P_THREADS 2 /* NUMBER_OF_FEDERATES */
+#ifdef FEDERATED_ZEPHYR
+#define NUMBER_OF_P2P_THREADS (FED_INBOUND_P2P_CONNECTIONS + FED_OUTBOUND_P2P_CONNECTIONS)
 #else
-#define NUMBER_OF_P2P_THREADS 2 /* TODO: Workaround. Why doesn't defined(FEDERATED) work? */
-#endif
+#define NUMBER_OF_P2P_THREADS 0
+#endif // FEDERATED_ZEPHYR
 
 // Number of additional threads that will be created
 // One worker will run on the main thread, so for N workers, only (N - 1) worker threads should be created
@@ -115,7 +115,6 @@ int lf_available_cores() {
 }
 
 int lf_thread_create(lf_thread_t* thread, void* (*lf_thread)(void*), void* arguments) {
-  // printk("****** Hello from // printk: lf_thread_create: Creating a thread ******\n");
   k_mutex_lock(&thread_mutex, K_FOREVER);
 
   // Use static id to map each created thread to a preallocated k_thread struct and stack
@@ -123,7 +122,6 @@ int lf_thread_create(lf_thread_t* thread, void* (*lf_thread)(void*), void* argum
 
   // Make sure we dont try to create too many threads
   if (tid > (NUMBER_OF_THREADS - 1)) {
-    // printk("****** ERROR from // printk: lf_thread_create: Exceeded max number of threads (%d) ******\n", NUMBER_OF_THREADS);
     return -1;
   }
 
