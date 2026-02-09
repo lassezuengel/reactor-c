@@ -82,15 +82,23 @@ int lf_enable_interrupts_nested() {
 #define NUMBER_OF_WATCHDOGS 0
 #endif
 
-#ifdef FEDERATED_ZEPHYR
-#define NUMBER_OF_P2P_THREADS (FED_INBOUND_P2P_CONNECTIONS + FED_OUTBOUND_P2P_CONNECTIONS)
-#else
-#define NUMBER_OF_P2P_THREADS 0
+#ifndef FEDERATED_ZEPHYR
+  // Number of additional threads that will be created
+  // One worker will run on the main thread, so for N workers, only (N - 1) worker threads should be created
+  #define NUMBER_OF_THREADS ((NUMBER_OF_WORKERS - 1) + USER_THREADS + NUMBER_OF_WATCHDOGS)
+#else // defined(FEDERATED_ZEPHYR)
+  // For federate execution, we only need threads for inbound connections, not for outbound connections,
+  // and if there are inbound connections, we need one additional thread to manage connection initiation.
+  // In any case, we need one (two?) additional thread(s).
+  // TODO: Check if two threads are needed, or if one is sufficient.
+  #if FED_INBOUND_P2P_CONNECTIONS > 0
+    #define NUMBER_OF_P2P_THREADS (1 + FED_INBOUND_P2P_CONNECTIONS)
+  #else
+    #define NUMBER_OF_P2P_THREADS (0)
+  #endif
+  #define NUMBER_OF_THREADS ((NUMBER_OF_WORKERS - 1) + USER_THREADS + NUMBER_OF_WATCHDOGS + 1 + 1 + NUMBER_OF_P2P_THREADS)
 #endif // FEDERATED_ZEPHYR
 
-// Number of additional threads that will be created
-// One worker will run on the main thread, so for N workers, only (N - 1) worker threads should be created
-#define NUMBER_OF_THREADS ((NUMBER_OF_WORKERS - 1) + USER_THREADS + NUMBER_OF_WATCHDOGS + NUMBER_OF_P2P_THREADS)
 
 K_MUTEX_DEFINE(thread_mutex);
 
@@ -122,6 +130,7 @@ int lf_thread_create(lf_thread_t* thread, void* (*lf_thread)(void*), void* argum
 
   // Make sure we dont try to create too many threads
   if (tid > (NUMBER_OF_THREADS - 1)) {
+    lf_print_error_and_exit("Exceeded the maximum number of threads (%d) that can be created.", NUMBER_OF_THREADS);
     return -1;
   }
 
