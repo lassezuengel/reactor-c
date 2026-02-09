@@ -218,7 +218,7 @@ void reset_socket_stat(struct socket_stat_t* socket_stat);
  * @ingroup Federated
  *
  * @return port number to be sent to the RTI.
- *  If clock synchronization is off compeltely, USHRT_MAX is returned.
+ *  If clock synchronization is off completely, USHRT_MAX is returned.
  *  If clock synchronization is set to initial, 0 is sent.
  *  If clock synchronization is set to on, a reserved UDP port number will be sent.
  */

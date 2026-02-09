@@ -47,6 +47,8 @@ int create_real_time_tcp_socket_errexit() {
   if (result < 0) {
     lf_print_error_system_failure("Failed to disable Nagle algorithm on socket server.");
   }
+#elif defined(PLATFORM_ZEPHYR)
+  // TODO: (How) can we do this on Zephyr?
 #endif // Linux
 
   return sock;

@@ -59,6 +59,7 @@
   #define LF_SIN_PORT  sin6_port
   #define LF_SIN_ADDR  sin6_addr
   #define LF_ADDR_ANY  in6addr_any
+  #define LF_S_ADDR    s6_addr
 
   #define LF_SET_LOCALHOST(fed)                                          \
     do {                                                                 \
@@ -77,6 +78,7 @@
   #define LF_SIN_PORT  sin_port
   #define LF_SIN_ADDR  sin_addr
   #define LF_ADDR_ANY  ((struct in_addr){INADDR_ANY})
+  #define LF_S_ADDR    s_addr
 
   #define LF_SET_LOCALHOST(fed)                                          \
     do {                                                                 \

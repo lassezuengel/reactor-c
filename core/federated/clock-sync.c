@@ -133,14 +133,18 @@ uint16_t setup_clock_synchronization_with_rti() {
   // Initialize the UDP socket
   _lf_rti_socket_UDP = socket(LF_AF, SOCK_DGRAM, IPPROTO_UDP);
   // Initialize the necessary information for the UDP address
-  struct sockaddr_in6 federate_UDP_addr;
+  lf_sockaddr federate_UDP_addr;
   federate_UDP_addr.LF_SIN_FAM  = LF_AF;
+#ifdef PLATFORM_ZEPHYR
+  federate_UDP_addr.LF_SIN_PORT = htons(1234u); // Zephyr requires a non-zero port to bind
+#else
   federate_UDP_addr.LF_SIN_PORT = htons(0u); // Port 0 indicates to bind that
                                              // it can assign any port to this
                                              // socket. This is okay because
                                              // the port number is then sent
                                              // to the RTI.
-  federate_UDP_addr.LF_SIN_ADDR.s_addr = INADDR_ANY;
+#endif
+  federate_UDP_addr.LF_SIN_ADDR = LF_ADDR_ANY;
   if (bind(_lf_rti_socket_UDP, (struct sockaddr*)&federate_UDP_addr, sizeof(federate_UDP_addr)) < 0) {
     lf_print_error_system_failure("Failed to bind its UDP socket.");
   }
@@ -422,7 +426,7 @@ static void* listen_to_rti_UDP_thread(void* args) {
       lf_print_error("Clock sync: UDP socket to RTI is broken: %s. Clock sync is now disabled.", strerror(errno));
       break;
     }
-    LF_PRINT_DEBUG("Clock sync: Received UDP message %u from RTI on port %u.", buffer[0], ntohs(RTI_UDP_addr.sin_port));
+    LF_PRINT_DEBUG("Clock sync: Received UDP message %u from RTI on port %u.", buffer[0], ntohs(RTI_UDP_addr.LF_SIN_PORT));
 
     // Handle the message
     if (waiting_for_T1) {
