@@ -779,7 +779,8 @@ static void* listen_to_federates(void* _args) {
         }
         break;
       case MSG_TYPE_P2P_TAGGED_MESSAGE:
-        LF_PRINT_LOG("Received tagged message from federate %d.", fed_id);
+        LF_PRINT_LOG("Received tagged message from fed %d at physical time: " PRINTF_TIME, fed_id, lf_time_physical_elapsed());
+
         if (handle_tagged_message(socket_id, fed_id)) {
           // P2P tagged messages are only used in decentralized coordination, and
           // it is not a fatal error if the socket is closed before the whole message is read.
@@ -2557,11 +2558,37 @@ int lf_send_tagged_message(environment_t* env, interval_t additional_delay, int 
     _fed.last_DNET = current_message_intended_tag;
   }
 
+#ifdef PLATFORM_ZEPHYR
+  // Zephyr defers ACKs for small TCP segments, which delays a second write by ~200ms.
+  // Merge header and payload so they leave in one segment and avoid the delayed ACK.
+  //
+  // Notice: We really do not need to dynamically allocate here. Instead, we can easily use
+  // a fixed-size buffer on the stack of size `header_length + length`. This would
+  // mean, though, that more parts of this function would need to be compiled conditionally
+  // on PLATFORM_ZEPHYR, which is a bit messier. We can refactor this function later if we
+  // want to avoid the dynamic allocation (i.e., on zephyr, create a `buffer` of size
+  // `header_length + length`, also write the message to the buffer, then send full buffer once).
+  size_t total_length = header_length + length;
+  unsigned char* combined_buffer = (unsigned char*)malloc(total_length);
+  if (combined_buffer == NULL) {
+    LF_MUTEX_UNLOCK(&lf_outbound_socket_mutex);
+    lf_print_error("Failed to allocate buffer for tagged message of length %zu.", total_length);
+    return -1;
+  }
+  memcpy(combined_buffer, header_buffer, header_length);
+  if (length > 0 && message != NULL) {
+    memcpy(combined_buffer + header_length, message, length);
+  }
+
+  int result = write_to_socket_close_on_error(socket, total_length, combined_buffer);
+  free(combined_buffer);
+#else
   int result = write_to_socket_close_on_error(socket, header_length, header_buffer);
   if (result == 0) {
     // Header sent successfully. Send the body.
     result = write_to_socket_close_on_error(socket, length, message);
   }
+#endif
   if (result != 0) {
     // Message did not send. Handling depends on message type.
     if (message_type == MSG_TYPE_P2P_TAGGED_MESSAGE) {
